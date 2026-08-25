@@ -1,0 +1,338 @@
+---
+title: "Objective_3_motifs_analysis"
+format: html
+editor: visual
+---
+
+## Setup
+
+Adjust `input_path` below to point at your combined RM annotation CSV.
+
+```{r}
+#| label: setup
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(vegan)
+library(ape)
+library(ggplot2)
+```
+
+
+```{r}
+#| label: load-data
+input_path <- "~/Objective_3/Objective_3_motifs_analysis/data/all_motifs_concat.tsv"
+
+df <- read.delim(input_path, sep = "\t", stringsAsFactors = FALSE)
+
+# Drop rows with no motif called
+df <- df %>% filter(Motif != "No Motif Assigned")
+
+n_isolates <- n_distinct(df$sample)
+n_isolates
+
+```
+
+```{r}
+#| label: exact-match
+motif_isolate_counts <- df %>%
+  distinct(sample, Motif) %>%
+  count(Motif, name = "n_isolates") %>%
+  arrange(desc(n_isolates))
+
+common_exact <- motif_isolate_counts %>%
+  filter(n_isolates == n_distinct(df$sample))
+
+cat("Motifs present in every isolate (exact match):\n")
+print(common_exact)
+```
+
+```{r}
+#| label: exact-match-freq
+cat("Motif frequency across isolates (top 20, exact match):\n")
+print(head(motif_isolate_counts, 20))
+```
+
+```{r}
+#| label: iupac-functions
+iupac_comp <- c(A = "T", T = "A", C = "G", G = "C", N = "N",
+                 R = "Y", Y = "R", S = "S", W = "W", K = "M", M = "K",
+                 B = "V", V = "B", D = "H", H = "D")
+
+revcomp <- function(s) {
+  chars <- strsplit(s, "")[[1]]
+  paste(rev(iupac_comp[chars]), collapse = "")
+}
+
+iupac_sets <- list(
+  A = c("A"), C = c("C"), G = c("G"), T = c("T"),
+  R = c("A", "G"), Y = c("C", "T"), S = c("G", "C"), W = c("A", "T"),
+  K = c("G", "T"), M = c("A", "C"),
+  B = c("C", "G", "T"), D = c("A", "G", "T"), H = c("A", "C", "T"), V = c("A", "C", "G"),
+  N = c("A", "C", "G", "T")
+)
+
+iupac_compatible <- function(a, b) {
+  if (nchar(a) != nchar(b)) return(FALSE)
+  ac <- strsplit(a, "")[[1]]
+  bc <- strsplit(b, "")[[1]]
+  all(mapply(function(x, y) length(intersect(iupac_sets[[x]], iupac_sets[[y]])) > 0, ac, bc))
+}
+```
+
+
+```{r}
+#| label: cluster-motifs
+motifs <- unique(df$Motif)
+n_m <- length(motifs)
+cluster_id <- setNames(seq_len(n_m), motifs)
+
+merge_clusters <- function(cid, i, j) {
+  old <- cid[j]
+  new <- cid[i]
+  cid[cid == old] <- new
+  cid
+}
+
+for (i in seq_len(n_m)) {
+  for (j in seq_len(n_m)) {
+    if (i >= j) next
+    m1 <- motifs[i]
+    m2 <- motifs[j]
+    same <- iupac_compatible(m1, m2) ||
+      (nchar(m1) == nchar(m2) && iupac_compatible(m1, revcomp(m2)))
+    if (same) cluster_id <- merge_clusters(cluster_id, i, j)
+  }
+}
+
+motif_family <- tibble(Motif = motifs, family_id = cluster_id[motifs]) %>%
+  group_by(family_id) %>%
+  mutate(family_label = paste(sort(unique(Motif)), collapse = " / ")) %>%
+  ungroup()
+
+df_fam <- df %>% left_join(motif_family, by = "Motif")
+```
+
+```{r}
+#| label: family-freq
+family_isolate_counts <- df_fam %>%
+  distinct(sample, family_label) %>%
+  count(family_label, name = "n_isolates") %>%
+  arrange(desc(n_isolates))
+
+cat("Motif families (IUPAC + reverse-complement aware) by isolate count:\n")
+print(family_isolate_counts, n = Inf)
+```
+
+```{r}
+#| label: family-common
+n_isolates_total <- n_isolates
+
+common_families <- family_isolate_counts %>%
+  filter(n_isolates == n_isolates_total)
+
+cat("Motif families present in ALL isolates:\n")
+print(common_families)
+```
+
+```{r}
+#| label: load-metadata
+metadata <- read.csv("~/Objective_3/Objective_3_motifs_analysis/data/metadata_Apr26.csv")
+
+metadata <- metadata %>% rename(sample = Isolate_ID)
+```
+
+
+```{r}
+#| label: join-metadata
+df_fam <- df_fam %>%
+  left_join(metadata, by = "sample")
+
+# sanity check: any isolates in the motif data with no metadata match?
+cat("Isolates missing metadata:\n")
+print(setdiff(unique(df_fam$sample), unique(metadata$sample)))
+```
+
+```{r}
+#| label: sbi-group-sizes
+sbi_sizes <- metadata %>%
+  count(SBI, name = "n_isolates_in_group") %>%
+  arrange(desc(n_isolates_in_group))
+
+cat("Isolates per SBI group:\n")
+print(sbi_sizes, n = Inf)
+```
+
+```{r}
+#| label: sbi-motif-presence
+family_sbi_presence <- df_fam %>%
+  distinct(sample, family_label, SBI) %>%
+  count(family_label, SBI, name = "n_isolates_with_motif") %>%
+  left_join(sbi_sizes, by = "SBI") %>%
+  mutate(prop_in_group = n_isolates_with_motif / n_isolates_in_group)
+
+cat("Motif family presence by SBI group:\n")
+print(family_sbi_presence, n = Inf)
+```
+
+```{r}
+#| label: sbi-specific-motifs
+family_sbi_groups <- family_sbi_presence %>%
+  group_by(family_label) %>%
+  summarise(
+    n_sbi_groups_present = n_distinct(SBI),
+    sbi_groups = paste(sort(unique(SBI)), collapse = ", "),
+    .groups = "drop"
+  )
+
+sbi_specific <- family_sbi_groups %>%
+  filter(n_sbi_groups_present == 1)
+
+cat("Motif families found in only ONE SBI group (SBI-specific):\n")
+print(sbi_specific, n = Inf)
+```
+
+```{r}
+#| label: sbi-specific-core
+sbi_specific_core <- family_sbi_presence %>%
+  semi_join(sbi_specific, by = "family_label") %>%
+  filter(prop_in_group == 1)
+
+cat("SBI-specific motifs that are also core (100%) within that group:\n")
+print(sbi_specific_core, n = Inf)
+```
+
+```{r}
+#| label: check-missing
+check_family <- function(label) {
+  present <- df_fam %>% filter(family_label == label) %>% pull(sample) %>% unique()
+  all_samples <- unique(df$sample)
+  setdiff(all_samples, present)
+}
+
+# Example — replace with a family_label string from the table above:
+# check_family("CACNNNNNNNCTGG / CCAGNNNNNNNGTG")
+```
+
+```{r}
+#| label: sbi-shared-motifs
+n_sbi_total <- n_distinct(metadata$SBI)
+
+family_sbi_groups_full <- family_sbi_groups %>%
+  arrange(desc(n_sbi_groups_present))
+
+cat("Motif families by number of SBI groups they appear in:\n")
+print(family_sbi_groups_full, n = Inf)
+```
+
+```{r}
+#| label: sbi-shared-motifs-only
+# Families present in more than one SBI group (i.e. NOT SBI-specific,
+# and not necessarily universal either)
+sbi_shared <- family_sbi_groups_full %>%
+  filter(n_sbi_groups_present > 1, n_sbi_groups_present < n_sbi_total)
+
+cat("Motif families shared between SOME (but not all) SBI groups:\n")
+print(sbi_shared, n = Inf)
+```
+
+```{r}
+#| label: motif-matrix
+# Build isolate x motif-family presence/absence matrix
+motif_matrix <- df_fam %>%
+  distinct(sample, family_label) %>%
+  mutate(present = 1) %>%
+  pivot_wider(names_from = family_label, values_from = present, values_fill = 0)
+
+# Move sample names to rownames, keep only the 0/1 matrix
+motif_mat <- as.matrix(motif_matrix %>% select(-sample))
+rownames(motif_mat) <- motif_matrix$sample
+
+dim(motif_mat)
+```
+
+```{r}
+#| label: pcoa-distance
+# Jaccard distance is standard for binary presence/absence data
+motif_dist <- vegdist(motif_mat, method = "jaccard", binary = TRUE)
+```
+
+```{r}
+#| label: pcoa-run
+pcoa_res <- pcoa(motif_dist)
+
+# Variance explained by each axis
+eig_pct <- round(100 * pcoa_res$values$Relative_eig[1:5], 1)
+cat("Variance explained by first 5 axes (%):\n")
+print(eig_pct)
+```
+
+```{r}
+#| label: pcoa-plot-data
+pcoa_scores <- as.data.frame(pcoa_res$vectors[, 1:2])
+colnames(pcoa_scores) <- c("Axis1", "Axis2")
+pcoa_scores$sample <- rownames(pcoa_scores)
+
+pcoa_scores <- pcoa_scores %>%
+  left_join(metadata, by = "sample")
+```
+
+```{r}
+#| label: pcoa-plot
+ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = SBI)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    x = paste0("PCoA1 (", eig_pct[1], "%)"),
+    y = paste0("PCoA2 (", eig_pct[2], "%)"),
+    title = "PCoA of isolates based on RM motif family presence/absence",
+    color = "SBI"
+  ) +
+  theme_bw()
+```
+
+```{r}
+#| label: pcoa-plot
+ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = SBI)) +
+  geom_jitter(size = 3, alpha = 0.8, width = 0.01, height = 0.01) +
+  labs(
+    x = paste0("PCoA1 (", eig_pct[1], "%)"),
+    y = paste0("PCoA2 (", eig_pct[2], "%)"),
+    title = "PCoA of isolates based on RM motif family presence/absence",
+    color = "SBI"
+  ) +
+  theme_bw()
+```
+
+```{r}
+#| label: pcoa-plot
+ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = Sample_site)) +
+  geom_jitter(size = 3, alpha = 0.8, width = 0.01, height = 0.01) +
+  labs(
+    x = paste0("PCoA1 (", eig_pct[1], "%)"),
+    y = paste0("PCoA2 (", eig_pct[2], "%)"),
+    title = "PCoA of isolates based on RM motif family presence/absence",
+    color = "SBI"
+  ) +
+  theme_bw()
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
