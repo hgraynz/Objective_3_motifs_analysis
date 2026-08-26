@@ -19,7 +19,6 @@ library(ape)
 library(ggplot2)
 ```
 
-
 ```{r}
 #| label: load-data
 input_path <- "~/Objective_3/Objective_3_motifs_analysis/data/all_motifs_concat.tsv"
@@ -81,7 +80,6 @@ iupac_compatible <- function(a, b) {
 }
 ```
 
-
 ```{r}
 #| label: cluster-motifs
 motifs <- unique(df$Motif)
@@ -142,7 +140,6 @@ metadata <- read.csv("~/Objective_3/Objective_3_motifs_analysis/data/metadata_Ap
 
 metadata <- metadata %>% rename(sample = Isolate_ID)
 ```
-
 
 ```{r}
 #| label: join-metadata
@@ -306,15 +303,447 @@ ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = SBI)) +
 
 ```{r}
 #| label: pcoa-plot
-ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = Sample_site)) +
+ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = Stx_gene)) +
   geom_jitter(size = 3, alpha = 0.8, width = 0.01, height = 0.01) +
   labs(
     x = paste0("PCoA1 (", eig_pct[1], "%)"),
     y = paste0("PCoA2 (", eig_pct[2], "%)"),
     title = "PCoA of isolates based on RM motif family presence/absence",
-    color = "SBI"
+    color = "Stx_gene"
   ) +
   theme_bw()
+```
+
+```{r}
+#| label: motifs-per-isolate
+# Raw motif count per isolate (exact-string motifs, as reported)
+motifs_per_isolate_raw <- df %>%
+  distinct(sample, Motif) %>%
+  count(sample, name = "n_motifs_raw")
+
+# Family-collapsed motif count per isolate (degenerate/RC variants merged)
+motifs_per_isolate_fam <- df_fam %>%
+  distinct(sample, family_label) %>%
+  count(sample, name = "n_motif_families")
+
+motifs_per_isolate <- motifs_per_isolate_raw %>%
+  left_join(motifs_per_isolate_fam, by = "sample") %>%
+  left_join(metadata, by = "sample")
+
+cat("Motif counts per isolate:\n")
+print(motifs_per_isolate %>% select(sample, SBI, n_motifs_raw, n_motif_families), n = Inf)
+```
+
+```{r}
+#| label: motifs-per-sbi-summary
+sbi_motif_summary <- motifs_per_isolate %>%
+  group_by(SBI) %>%
+  summarise(
+    n_isolates = n(),
+    mean_n_motifs_raw = mean(n_motifs_raw),
+    sd_n_motifs_raw = sd(n_motifs_raw),
+    mean_n_motif_families = mean(n_motif_families),
+    sd_n_motif_families = sd(n_motif_families),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_n_motif_families))
+
+cat("Average number of motifs per isolate, by SBI group:\n")
+print(sbi_motif_summary, n = Inf)
+```
+
+```{r}
+#| label: motifs-per-sbi-plot
+ggplot(motifs_per_isolate, aes(x = SBI, y = n_motif_families, fill = SBI)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.7, size = 2) +
+  labs(
+    x = "SBI group",
+    y = "Number of motif families per isolate",
+    title = "Motif family richness per isolate, by SBI group"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: motifs-per-sbi-ridgeline
+library(ggridges)
+
+ggplot(motifs_per_isolate, aes(x = n_motif_families, y = SBI, fill = SBI)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, jittered_points = TRUE,
+                       point_shape = 21, point_size = 2, point_alpha = 0.8,
+                       position = position_points_jitter(width = 0, height = 0.1)) +
+  labs(
+    x = "Number of motif families per isolate",
+    y = "SBI group",
+    title = "Motif family richness per isolate, by SBI group"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: reorder-sbi
+library(forcats)
+
+# Push SY2c and ASY2c to the end (bottom of the ridgeline), keeping
+# everything else in its existing order
+motifs_per_isolate <- motifs_per_isolate %>%
+  mutate(SBI = fct_relevel(SBI, "SY2c", "ASY2c", after = Inf))
+```
+
+```{r}
+#| label: motifs-per-sbi-ridgeline
+ggplot(motifs_per_isolate, aes(x = n_motif_families, y = SBI, fill = SBI)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, jittered_points = TRUE,
+                       point_shape = 21, point_size = 2, point_alpha = 0.8,
+                       position = position_points_jitter(width = 0, height = 0.1)) +
+  labs(
+    x = "Number of motif families per isolate",
+    y = "SBI group",
+    title = "Motif family richness per isolate, by SBI group"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: gatc-methylated-sites
+gatc_data <- df %>%
+  filter(Motif == "GATC") %>%
+  left_join(metadata, by = "sample") %>%
+  mutate(SBI = fct_relevel(SBI, "SY2c", "ASY2c", after = Inf))
+
+cat("GATC methylated sites per isolate:\n")
+print(gatc_data %>% select(sample, SBI, Methylated_sites, Genome_sites, Average_Percent_Methylation_per_site), n = Inf)
+```
+
+```{r}
+#| label: gatc-ridgeline
+ggplot(gatc_data, aes(x = Methylated_sites, y = SBI, fill = SBI)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, jittered_points = TRUE,
+                       point_shape = 21, point_size = 2, point_alpha = 0.8,
+                       position = position_points_jitter(width = 0, height = 0.1)) +
+  labs(
+    x = "GATC methylated sites per isolate",
+    y = "SBI group",
+    title = "GATC (6mA) methylated site counts per isolate, by SBI group"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: gatc-pct-methylation-ridgeline
+ggplot(gatc_data, aes(x = Average_Percent_Methylation_per_site, y = SBI, fill = SBI)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, jittered_points = TRUE,
+                       point_shape = 21, point_size = 2, point_alpha = 0.8,
+                       position = position_points_jitter(width = 0, height = 0.1)) +
+  labs(
+    x = "Average % methylation per GATC site",
+    y = "SBI group",
+    title = "GATC (6mA) average methylation percentage per isolate, by SBI group"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: motifs-per-isolate-overall
+cat("Overall average number of motifs per isolate:\n")
+cat(sprintf("  Raw motifs (exact string):     mean = %.2f, sd = %.2f, range = %d–%d\n",
+            mean(motifs_per_isolate$n_motifs_raw), sd(motifs_per_isolate$n_motifs_raw),
+            min(motifs_per_isolate$n_motifs_raw), max(motifs_per_isolate$n_motifs_raw)))
+cat(sprintf("  Motif families (IUPAC/RC merged): mean = %.2f, sd = %.2f, range = %d–%d\n",
+            mean(motifs_per_isolate$n_motif_families), sd(motifs_per_isolate$n_motif_families),
+            min(motifs_per_isolate$n_motif_families), max(motifs_per_isolate$n_motif_families)))
+```
+
+```{r}
+#| label: motifs-per-isolate-by-type
+# Split by methylation type (6mA vs 5mC) for a bit more resolution
+motifs_per_isolate_by_type <- df %>%
+  distinct(sample, Motif, Methylation_type) %>%
+  count(sample, Methylation_type, name = "n_motifs_raw") %>%
+  group_by(Methylation_type) %>%
+  summarise(
+    mean_n_motifs = mean(n_motifs_raw),
+    sd_n_motifs = sd(n_motifs_raw),
+    min_n_motifs = min(n_motifs_raw),
+    max_n_motifs = max(n_motifs_raw),
+    .groups = "drop"
+  )
+
+cat("Average number of motifs per isolate, by methylation type:\n")
+print(motifs_per_isolate_by_type)
+```
+
+```{r}
+#| label: motifs-6ma-per-isolate
+motifs_6ma_per_isolate <- df %>%
+  filter(Methylation_type == "6mA") %>%
+  distinct(sample, Motif) %>%
+  count(sample, name = "n_motifs_6mA") %>%
+  left_join(metadata, by = "sample") %>%
+  mutate(SBI = fct_relevel(SBI, "SY2c", "ASY2c", after = Inf))
+
+cat("6mA motif counts per isolate:\n")
+print(motifs_6ma_per_isolate %>% select(sample, SBI, n_motifs_6mA), n = Inf)
+```
+
+```{r}
+#| label: motifs-6ma-per-sbi-ridgeline
+ggplot(motifs_6ma_per_isolate, aes(x = n_motifs_6mA, y = SBI, fill = SBI)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2, jittered_points = TRUE,
+                       point_shape = 21, point_size = 2, point_alpha = 0.8,
+                       position = position_points_jitter(width = 0, height = 0.1)) +
+  labs(
+    x = "Number of 6mA motifs per isolate",
+    y = "SBI group",
+    title = "6mA motif counts per isolate, by SBI group"
+  ) +
+  theme_ridges() +
+  theme(legend.position = "none")
+```
+
+```{r}
+#| label: avg-isolates-per-motif-per-sbi
+# For each SBI group: how many isolates (on average) carry a given motif
+# family, considering only motifs actually present in that group
+avg_isolates_per_motif_sbi <- family_sbi_presence %>%
+  group_by(SBI) %>%
+  summarise(
+    n_isolates_in_group = first(n_isolates_in_group),
+    n_distinct_motifs = n(),
+    mean_isolates_per_motif = mean(n_isolates_with_motif),
+    sd_isolates_per_motif = sd(n_isolates_with_motif),
+    mean_prop_per_motif = mean(prop_in_group),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_prop_per_motif))
+
+cat("Average number (and proportion) of isolates carrying each motif family, by SBI group:\n")
+print(avg_isolates_per_motif_sbi, n = Inf)
+```
+
+```{r}
+#| label: avg-isolates-per-motif-sbi-plot
+ggplot(avg_isolates_per_motif_sbi, aes(x = reorder(SBI, mean_prop_per_motif), y = mean_prop_per_motif)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  geom_errorbar(aes(ymin = pmax(0, mean_prop_per_motif - sd_isolates_per_motif / n_isolates_in_group),
+                     ymax = pmin(1, mean_prop_per_motif + sd_isolates_per_motif / n_isolates_in_group)),
+                width = 0.2) +
+  coord_flip() +
+  labs(
+    x = "SBI group",
+    y = "Mean proportion of isolates in group carrying a given motif family",
+    title = "Motif conservation within SBI groups"
+  ) +
+  theme_bw()
+```
+
+```{r}
+#| label: family-collapse-summary
+n_raw_motifs <- n_distinct(df$Motif)
+n_families <- n_distinct(motif_family$family_label)
+
+cat(sprintf("Raw distinct motifs (exact string):        %d\n", n_raw_motifs))
+cat(sprintf("Collapsed motif families (IUPAC + RC aware): %d\n", n_families))
+cat(sprintf("Reduction: %d motifs merged into %d families (%.1f%% fewer)\n",
+            n_raw_motifs - n_families, n_families,
+            100 * (1 - n_families / n_raw_motifs)))
+```
+
+```{r}
+#| label: family-collapse-detail
+family_sizes <- motif_family %>%
+  group_by(family_label) %>%
+  summarise(n_raw_variants = n(), .groups = "drop") %>%
+  arrange(desc(n_raw_variants))
+
+cat("Motif families ranked by how many raw motif strings were merged into them:\n")
+print(family_sizes, n = Inf)
+```
+
+```{r}
+#| label: motif-sbi-presence-absence
+motif_sbi_heatmap_data <- family_sbi_presence %>%
+  mutate(n_isolates_without_motif = n_isolates_in_group - n_isolates_with_motif) %>%
+  select(family_label, SBI, n_isolates_in_group,
+         n_isolates_with_motif, n_isolates_without_motif) %>%
+  pivot_longer(
+    cols = c(n_isolates_with_motif, n_isolates_without_motif),
+    names_to = "status",
+    values_to = "n_isolates"
+  ) %>%
+  mutate(status = recode(status,
+                          n_isolates_with_motif = "Present",
+                          n_isolates_without_motif = "Absent"))
+
+cat("Motif presence/absence counts by SBI group:\n")
+print(motif_sbi_heatmap_data, n = Inf)
+```
+
+```{r}
+#| label: motif-sbi-heatmap-plot
+ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n_isolates), size = 2.8) +
+  facet_wrap(~status) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Isolates",
+    title = "Isolates with vs without each motif family, by SBI group"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
+```
+
+```{r}
+p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n_isolates), size = 2.8) +
+  facet_wrap(~status) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  theme_bw()
+print(p)
+```
+
+```{r}
+#| label: motif-sbi-heatmap-save
+p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n_isolates), size = 2.8) +
+  facet_wrap(~status) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Isolates",
+    title = "Isolates with vs without each motif family, by SBI group"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
+
+ggsave("motif_sbi_heatmap.png", plot = p, width = 12, height = 14, dpi = 300)
+```
+
+```{r}
+#| label: short-family-labels
+motif_family <- motif_family %>%
+  group_by(family_id) %>%
+  mutate(
+    family_short = paste0(min(Motif), " (+", n() - 1, " variants)"),
+    family_full = paste(sort(unique(Motif)), collapse = " / ")
+  ) %>%
+  ungroup()
+
+# check how big the clusters actually are
+family_family_sizes <- motif_family %>%
+  distinct(family_id, family_short, family_full) %>%
+  mutate(n_variants = str_count(family_full, "/") + 1) %>%
+  arrange(desc(n_variants))
+
+cat("Largest motif family clusters:\n")
+print(family_family_sizes %>% select(family_short, n_variants), n = 15)
+```
+
+```{r}
+#| label: propagate-short-labels
+df_fam <- df %>%
+  left_join(motif_family %>% select(Motif, family_id, family_short, family_full),
+            by = "Motif")
+```
+
+```{r}
+#| label: rebuild-family-sbi-presence
+family_sbi_presence <- df_fam %>%
+  left_join(metadata, by = "sample") %>%
+  distinct(sample, family_short, SBI) %>%
+  count(family_short, SBI, name = "n_isolates_with_motif") %>%
+  left_join(sbi_sizes, by = "SBI") %>%
+  mutate(prop_in_group = n_isolates_with_motif / n_isolates_in_group)
+```
+
+```{r}
+#| label: motif-sbi-presence-absence-v2
+motif_sbi_heatmap_data <- family_sbi_presence %>%
+  mutate(n_isolates_without_motif = n_isolates_in_group - n_isolates_with_motif) %>%
+  select(family_short, SBI, n_isolates_in_group,
+         n_isolates_with_motif, n_isolates_without_motif) %>%
+  pivot_longer(
+    cols = c(n_isolates_with_motif, n_isolates_without_motif),
+    names_to = "status",
+    values_to = "n_isolates"
+  ) %>%
+  mutate(status = recode(status,
+                          n_isolates_with_motif = "Present",
+                          n_isolates_without_motif = "Absent"))
+```
+
+```{r}
+#| label: motif-sbi-heatmap-save-v2
+p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_short, fill = n_isolates)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n_isolates), size = 2.8) +
+  facet_wrap(~status) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Isolates",
+    title = "Isolates with vs without each motif family, by SBI group"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
+
+ggsave("motif_sbi_heatmap.png", plot = p, width = 12, height = 14, dpi = 300)
+```
+
+```{r}
+#| label: motif-sbi-heatmap-refine
+# Drop the two universal motifs (all-present, zero variability, uninformative here)
+uninformative <- c("GATC (+0 variants)", "CCTGG (+1 variants)")
+
+# Order rows by how variable presence is across SBI groups —
+# most differentiating motifs at the top
+row_order <- family_sbi_presence %>%
+  filter(!family_short %in% uninformative) %>%
+  group_by(family_short) %>%
+  summarise(variability = sd(prop_in_group), .groups = "drop") %>%
+  arrange(desc(variability)) %>%
+  pull(family_short)
+
+motif_sbi_heatmap_data_refined <- motif_sbi_heatmap_data %>%
+  filter(!family_short %in% uninformative) %>%
+  mutate(family_short = factor(family_short, levels = rev(row_order)))
+```
+
+```{r}
+#| label: motif-sbi-heatmap-save-refined
+p <- ggplot(motif_sbi_heatmap_data_refined, aes(x = SBI, y = family_short, fill = n_isolates)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n_isolates), size = 2.8) +
+  facet_wrap(~status) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Isolates",
+    title = "Isolates with vs without each motif family, by SBI group",
+    subtitle = "Rows ordered by variability in presence across SBI groups (most differentiating at top)"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
+
+ggsave("motif_sbi_heatmap_refined.png", plot = p, width = 12, height = 13, dpi = 300)
 ```
 
 ```{r}
