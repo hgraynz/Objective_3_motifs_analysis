@@ -585,53 +585,7 @@ cat("Motif presence/absence counts by SBI group:\n")
 print(motif_sbi_heatmap_data, n = Inf)
 ```
 
-```{r}
-#| label: motif-sbi-heatmap-plot
-ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = n_isolates), size = 2.8) +
-  facet_wrap(~status) +
-  scale_fill_gradient(low = "white", high = "steelblue") +
-  labs(
-    x = "SBI group",
-    y = "Motif family",
-    fill = "Isolates",
-    title = "Isolates with vs without each motif family, by SBI group"
-  ) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.text.y = element_text(size = 7))
-```
 
-```{r}
-p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = n_isolates), size = 2.8) +
-  facet_wrap(~status) +
-  scale_fill_gradient(low = "white", high = "steelblue") +
-  theme_bw()
-print(p)
-```
-
-```{r}
-#| label: motif-sbi-heatmap-save
-p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_label, fill = n_isolates)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = n_isolates), size = 2.8) +
-  facet_wrap(~status) +
-  scale_fill_gradient(low = "white", high = "steelblue") +
-  labs(
-    x = "SBI group",
-    y = "Motif family",
-    fill = "Isolates",
-    title = "Isolates with vs without each motif family, by SBI group"
-  ) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.text.y = element_text(size = 7))
-
-ggsave("motif_sbi_heatmap.png", plot = p, width = 12, height = 14, dpi = 300)
-```
 
 ```{r}
 #| label: short-family-labels
@@ -686,76 +640,54 @@ motif_sbi_heatmap_data <- family_sbi_presence %>%
                           n_isolates_without_motif = "Absent"))
 ```
 
+
+
 ```{r}
-#| label: motif-sbi-heatmap-save-v2
-p <- ggplot(motif_sbi_heatmap_data, aes(x = SBI, y = family_short, fill = n_isolates)) +
+#| label: motif-sbi-heatmap-pct-patchwork
+library(patchwork)
+
+motif_sbi_pct_data <- family_sbi_presence %>%
+  filter(!family_short %in% uninformative) %>%
+  mutate(
+    pct_present = 100 * prop_in_group,
+    family_short = factor(family_short, levels = rev(row_order))
+  )
+
+# Top panel: group sizes, plain (no fill scale)
+p_n <- ggplot(sbi_sizes, aes(x = SBI, y = 1, label = n_isolates_in_group)) +
+  geom_tile(fill = "grey98", color = "white") +
+  geom_text(size = 3) +
+  labs(y = NULL) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 7),
+        plot.margin = margin(b = 0)) +
+  scale_y_continuous(breaks = 1, labels = "N isolates")
+
+# Bottom panel: the percentage heatmap
+p_heat <- ggplot(motif_sbi_pct_data, aes(x = SBI, y = family_short, fill = pct_present)) +
   geom_tile(color = "white") +
-  geom_text(aes(label = n_isolates), size = 2.8) +
-  facet_wrap(~status) +
-  scale_fill_gradient(low = "white", high = "steelblue") +
+  geom_text(aes(label = round(pct_present)), size = 2.8) +
+  scale_fill_gradient(low = "grey98", high = "dodgerblue", limits = c(0, 100)) +
   labs(
     x = "SBI group",
     y = "Motif family",
-    fill = "Isolates",
-    title = "Isolates with vs without each motif family, by SBI group"
+    fill = "% isolates\nwith motif"
   ) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.text.y = element_text(size = 7))
+        axis.text.y = element_text(size = 7),
+        plot.margin = margin(t = 0))
 
-ggsave("motif_sbi_heatmap.png", plot = p, width = 12, height = 14, dpi = 300)
-```
-
-```{r}
-#| label: motif-sbi-heatmap-refine
-# Drop the two universal motifs (all-present, zero variability, uninformative here)
-uninformative <- c("GATC (+0 variants)", "CCTGG (+1 variants)")
-
-# Order rows by how variable presence is across SBI groups —
-# most differentiating motifs at the top
-row_order <- family_sbi_presence %>%
-  filter(!family_short %in% uninformative) %>%
-  group_by(family_short) %>%
-  summarise(variability = sd(prop_in_group), .groups = "drop") %>%
-  arrange(desc(variability)) %>%
-  pull(family_short)
-
-motif_sbi_heatmap_data_refined <- motif_sbi_heatmap_data %>%
-  filter(!family_short %in% uninformative) %>%
-  mutate(family_short = factor(family_short, levels = rev(row_order)))
-```
-
-```{r}
-#| label: motif-sbi-heatmap-save-refined
-p <- ggplot(motif_sbi_heatmap_data_refined, aes(x = SBI, y = family_short, fill = n_isolates)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = n_isolates), size = 2.8) +
-  facet_wrap(~status) +
-  scale_fill_gradient(low = "white", high = "steelblue") +
-  labs(
-    x = "SBI group",
-    y = "Motif family",
-    fill = "Isolates",
-    title = "Isolates with vs without each motif family, by SBI group",
+p_combined <- p_n / p_heat +
+  plot_layout(heights = c(1, 30)) +
+  plot_annotation(
+    title = "Percentage of isolates carrying each motif family, by SBI group",
     subtitle = "Rows ordered by variability in presence across SBI groups (most differentiating at top)"
-  ) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        axis.text.y = element_text(size = 7))
+  )
 
-ggsave("motif_sbi_heatmap_refined.png", plot = p, width = 12, height = 13, dpi = 300)
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
+ggsave("figures/motif_sbi_heatmap_pct_patchwork.png", plot = p_combined, width = 10, height = 13, dpi = 300)
 ```
 
 ```{r}
