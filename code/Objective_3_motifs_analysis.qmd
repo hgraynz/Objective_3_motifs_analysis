@@ -301,6 +301,27 @@ ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = SBI)) +
   theme_bw()
 ```
 
+
+```{r}
+#| label: pcoa-plot
+pcoa_scores$Farm_id <- factor(
+  pcoa_scores$Farm_id,
+  levels = c(19, 25, 30, 84, 130),
+  labels = c("19", "25", "30", "84", "130")
+)
+
+ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = Farm_id)) +
+  geom_jitter(size = 3, alpha = 0.8, width = 0.01, height = 0.01) +
+  labs(
+    x = paste0("PCoA1 (", eig_pct[1], "%)"),
+    y = paste0("PCoA2 (", eig_pct[2], "%)"),
+    title = "PCoA of isolates based on RM motif family presence/absence",
+    color = "Farm"
+  ) +
+  theme_bw()
+```
+
+
 ```{r}
 #| label: reorder-sbi
 # Push SY2c and ASY2c to the end (bottom of ridgelines), keeping
