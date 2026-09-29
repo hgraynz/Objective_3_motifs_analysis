@@ -303,7 +303,7 @@ ggplot(pcoa_scores, aes(x = Axis1, y = Axis2, color = SBI)) +
 
 
 ```{r}
-#| label: pcoa-plot
+#| label: pcoa-plot-farmt
 pcoa_scores$Farm_id <- factor(
   pcoa_scores$Farm_id,
   levels = c(19, 25, 30, 84, 130),
@@ -715,21 +715,135 @@ ggplot(pcoa_scores_clustered, aes(x = Axis1, y = Axis2, color = motif_cluster, s
 
 
 ```{r}
+#| label: motif-sbi-site-stats
+# Aggregate to family level per isolate first (sum counts across any
+# raw motifs merged into the same family within a single isolate),
+# then join SBI and average within each family x SBI group
+motif_isolate_family_stats <- df_fam %>%
+  filter(!is.na(Genome_sites)) %>%
+  group_by(sample, family_short, SBI) %>%
+  summarise(
+    Genome_sites = sum(Genome_sites),
+    Methylated_sites = sum(Methylated_sites),
+    .groups = "drop"
+  ) %>%
+  mutate(pct_methylated = 100 * Methylated_sites / Genome_sites)
 
+family_sbi_site_stats <- motif_isolate_family_stats %>%
+  filter(!family_short %in% uninformative) %>%
+  group_by(family_short, SBI) %>%
+  summarise(
+    mean_genome_sites = mean(Genome_sites),
+    mean_methylated_sites = mean(Methylated_sites),
+    mean_pct_methylated = mean(pct_methylated),
+    n_isolates_with_data = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(family_short = factor(family_short, levels = rev(row_order)))
+
+cat("Average genome sites / methylated sites / % methylation, by motif family and SBI group:\n")
+print(family_sbi_site_stats, n = Inf)
 ```
 
 ```{r}
-
+#| label: motif-sbi-site-heatmap-long
+site_heatmap_long <- family_sbi_site_stats %>%
+  pivot_longer(
+    cols = c(mean_genome_sites, mean_methylated_sites, mean_pct_methylated),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(metric = recode(metric,
+                          mean_genome_sites = "Mean genome sites",
+                          mean_methylated_sites = "Mean methylated sites",
+                          mean_pct_methylated = "Mean % methylated"),
+         metric = factor(metric, levels = c("Mean genome sites",
+                                             "Mean methylated sites",
+                                             "Mean % methylated")))
 ```
 
 
 ```{r}
+#| label: motif-sbi-site-heatmap-save
+p <- ggplot(site_heatmap_long, aes(x = SBI, y = family_short, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 1)), size = 2.5) +
+  facet_wrap(~metric, scales = "free_x") +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Value",
+    title = "Genome sites, methylated sites, and % methylation by motif family and SBI group",
+    subtitle = "Averaged across isolates carrying each motif; rows ordered as in the presence/absence heatmap"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
 
+ggsave("motif_sbi_site_stats_heatmap.png", plot = p, width = 15, height = 13, dpi = 300)#| label: motif-sbi-site-heatmap-save
+p <- ggplot(site_heatmap_long, aes(x = SBI, y = family_short, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 1)), size = 2.5) +
+  facet_wrap(~metric, scales = "free_x") +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(
+    x = "SBI group",
+    y = "Motif family",
+    fill = "Value",
+    title = "Genome sites, methylated sites, and % methylation by motif family and SBI group",
+    subtitle = "Averaged across isolates carrying each motif; rows ordered as in the presence/absence heatmap"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
+
+ggsave("motif_sbi_site_stats_heatmap.png", plot = p, width = 15, height = 13, dpi = 300)
 ```
 
 
 ```{r}
+#| label: motif-sbi-site-heatmap-patchwork
+p_genome <- ggplot(family_sbi_site_stats, aes(x = SBI, y = family_short, fill = mean_genome_sites)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_genome_sites)), size = 2.5) +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(x = "SBI group", y = "Motif family", fill = "Mean\ngenome sites",
+       title = "Genome sites") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 7))
 
+p_methylated <- ggplot(family_sbi_site_stats, aes(x = SBI, y = family_short, fill = mean_methylated_sites)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_methylated_sites)), size = 2.5) +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(x = "SBI group", y = NULL, fill = "Mean\nmethylated\nsites",
+       title = "Methylated sites") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+p_pct <- ggplot(family_sbi_site_stats, aes(x = SBI, y = family_short, fill = mean_pct_methylated)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_pct_methylated, 1)), size = 2.5) +
+  scale_fill_gradient(low = "white", high = "dodgerblue", limits = c(0, 100)) +
+  labs(x = "SBI group", y = NULL, fill = "Mean %\nmethylated",
+       title = "% methylated") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+p_combined <- p_genome + p_methylated + p_pct +
+  plot_layout(widths = c(1.4, 1.2, 1)) +
+  plot_annotation(
+    title = "Genome sites, methylated sites, and % methylation by motif family and SBI group",
+    subtitle = "Averaged across isolates carrying each motif; rows ordered as in the presence/absence heatmap"
+  )
+
+ggsave("motif_sbi_site_stats_heatmap_patchwork.png", plot = p_combined, width = 18, height = 13, dpi = 300)
 ```
 
 ```{r}
