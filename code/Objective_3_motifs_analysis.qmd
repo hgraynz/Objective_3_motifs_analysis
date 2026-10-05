@@ -110,6 +110,7 @@ motif_family <- tibble(Motif = motifs, family_id = cluster_id[motifs]) %>%
     family_short = paste0(min(Motif), " (+", n() - 1, " variants)")
   ) %>%
   ungroup()
+write.csv(motif_family, "~/Objective_3/Objective_3_motifs_analysis/data/motif_family.csv", row.names = FALSE)
 
 df_fam <- df %>%
   left_join(motif_family %>% select(Motif, family_id, family_label, family_short),
@@ -612,7 +613,7 @@ p_combined <- p_n / p_heat +
     subtitle = "Rows ordered by variability in presence across SBI groups (most differentiating at top)"
   )
 
-ggsave("motif_sbi_heatmap_pct_patchwork.png", plot = p_combined, width = 10, height = 13, dpi = 300)
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_heatmap_pct_patchwork.png", plot = p_combined, width = 10, height = 13, dpi = 300)
 ```
 
 ```{r}
@@ -798,7 +799,7 @@ p <- ggplot(site_heatmap_long, aes(x = SBI, y = family_short, fill = value)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
         axis.text.y = element_text(size = 7))
 
-ggsave("motif_sbi_site_stats_heatmap.png", plot = p, width = 15, height = 13, dpi = 300)
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap.png", plot = p, width = 15, height = 13, dpi = 300)
 ```
 
 
@@ -843,32 +844,154 @@ p_combined <- p_genome + p_methylated + p_pct +
     subtitle = "Averaged across isolates carrying each motif; rows ordered as in the presence/absence heatmap"
   )
 
-ggsave("motif_sbi_site_stats_heatmap_patchwork.png", plot = p_combined, width = 18, height = 13, dpi = 300)
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap_patchwork.png", plot = p_combined, width = 18, height = 13, dpi = 300)
+```
+
+```{r}
+#| label: motif-sbi-site-stats-raw
+# Site stats per isolate, raw motif (no family collapsing)
+motif_isolate_stats_raw <- df %>%
+  filter(!is.na(Genome_sites)) %>%
+  left_join(metadata, by = "sample") %>%
+  group_by(sample, Motif, SBI) %>%
+  summarise(
+    Genome_sites = sum(Genome_sites),
+    Methylated_sites = sum(Methylated_sites),
+    .groups = "drop"
+  ) %>%
+  mutate(pct_methylated = 100 * Methylated_sites / Genome_sites)
+
+# Presence proportion per raw motif x SBI (for row ordering + filtering,
+# mirroring what we did for family_sbi_presence)
+motif_raw_sbi_presence <- df %>%
+  left_join(metadata, by = "sample") %>%
+  distinct(sample, Motif, SBI) %>%
+  count(Motif, SBI, name = "n_isolates_with_motif") %>%
+  left_join(sbi_sizes, by = "SBI") %>%
+  mutate(prop_in_group = n_isolates_with_motif / n_isolates_in_group)
+
+uninformative_raw <- c("GATC", "CCWGG", "CCTGG")
+
+row_order_raw <- motif_raw_sbi_presence %>%
+  filter(!Motif %in% uninformative_raw) %>%
+  group_by(Motif) %>%
+  summarise(variability = sd(prop_in_group), .groups = "drop") %>%
+  arrange(desc(variability)) %>%
+  pull(Motif)
+
+motif_sbi_site_stats_raw <- motif_isolate_stats_raw %>%
+  filter(!Motif %in% uninformative_raw) %>%
+  group_by(Motif, SBI) %>%
+  summarise(
+    mean_genome_sites = mean(Genome_sites),
+    mean_methylated_sites = mean(Methylated_sites),
+    mean_pct_methylated = mean(pct_methylated),
+    n_isolates_with_data = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(Motif = factor(Motif, levels = rev(row_order_raw)))
+
+cat("Average genome sites / methylated sites / % methylation, by RAW motif and SBI group:\n")
+print(motif_sbi_site_stats_raw, n = Inf)
+```
+
+
+```{r}
+#| label: motif-sbi-site-heatmap-raw-patchwork
+p_genome_raw <- ggplot(motif_sbi_site_stats_raw, aes(x = SBI, y = Motif, fill = mean_genome_sites)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_genome_sites)), size = 3.5) +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(x = "SBI group", y = "Motif", fill = "Mean\ngenome sites",
+       title = "Genome sites") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 10))
+
+p_methylated_raw <- ggplot(motif_sbi_site_stats_raw, aes(x = SBI, y = Motif, fill = mean_methylated_sites)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_methylated_sites)), size = 3.5) +
+  scale_fill_gradient(low = "white", high = "darkorange") +
+  labs(x = "SBI group", y = NULL, fill = "Mean\nmethylated\nsites",
+       title = "Methylated sites") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+p_pct_raw <- ggplot(motif_sbi_site_stats_raw, aes(x = SBI, y = Motif, fill = mean_pct_methylated)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(mean_pct_methylated, 1)), size = 3.5) +
+  scale_fill_gradient(low = "white", high = "dodgerblue", limits = c(0, 100)) +
+  labs(x = "SBI group", y = NULL, fill = "Mean %\nmethylated",
+       title = "% methylated") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+p_combined_raw <- p_genome_raw + p_methylated_raw + p_pct_raw +
+  plot_layout(widths = c(1.4, 1.2, 1)) +
+  plot_annotation(
+    title = "Genome sites, methylated sites, and % methylation by raw motif and SBI group",
+    subtitle = "Averaged across isolates carrying each motif (no family collapsing); rows ordered by presence variability"
+  )
+
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap_raw.png", plot = p_combined_raw, width = 18, height = 28, dpi = 300)
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap_raw.pdf", plot = p_combined_raw, width = 18, height = 28, dpi = 300)
+```
+
+
+```{r}
+#| label: motif-family-strip-data
+motif_to_family <- motif_family %>%
+  distinct(Motif, family_short)
+
+motif_sbi_site_stats_raw <- motif_sbi_site_stats_raw %>%
+  left_join(motif_to_family, by = c("Motif" = "Motif"))
+
+family_strip_data <- motif_sbi_site_stats_raw %>%
+  distinct(Motif, family_short)
+```
+
+```{r}
+#| label: motif-family-strip-plot
+p_family_strip <- ggplot(family_strip_data, aes(x = "Family", y = Motif, fill = family_short)) +
+  geom_tile(color = "white") +
+  labs(x = NULL, y = NULL, fill = "Motif family") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        axis.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank(),
+        legend.position = "none")  # legend usually too large with many families — see note below
+```
+
+
+```{r}
+#| label: motif-sbi-site-heatmap-raw-patchwork-v2
+p_combined_raw <- p_family_strip + p_genome_raw + p_methylated_raw + p_pct_raw +
+  plot_layout(widths = c(0.15, 1.4, 1.2, 1)) +
+  plot_annotation(
+    title = "Genome sites, methylated sites, and % methylation by raw motif and SBI group",
+    subtitle = "Averaged across isolates carrying each motif; left strip shows motif family membership; rows ordered by presence variability"
+  )
+
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap_raw2.png", plot = p_combined_raw, width = 18, height = 28, dpi = 300)
+ggsave("~/Objective_3/Objective_3_motifs_analysis/figures/motif_sbi_site_stats_heatmap_raw2.pdf", plot = p_combined_raw, width = 18, height = 28, dpi = 300)
+```
+
+
+```{r}
+
 ```
 
 ```{r}
 
 ```
 
-
 ```{r}
 
 ```
-
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-
-```{r}
-
-```
-
 
 ```{r}
 
